@@ -1,0 +1,29 @@
+Hey team. Here are the different parts we need to handle for the project
+
+1: environment set up 
+    -use virtualenv?
+    -get a requirements file
+    -.sh scripts to load everything
+    -need to figure out pytorch vs tf, pickle, numpy, logger, 
+    
+2: data download/processing/cleaning
+    - write .sh script to download yelp photo data using wget?
+    - reduce entire JSON data to just photos and yelp ratings
+    - write a loader class, needs to follow data_loader API for pytorch
+    - train/val/test set
+
+3: model building, classifier
+    - start with this
+    - use GoogleNet/ResNet pretrained layers for speed/accuracy
+    - do architecture surgery on last few layers for yelp review
+    - begin classifying, tune hyperparameters
+
+4: model building, GAN
+    - honestly not sure what this entails
+    - but y'all do and I will soon!
+
+5: testing / analysis
+    - how well can we predict yelp scores with thorough hyperparameter tuning?
+    - what do fail cases look like? 
+    - GAN stuff idk
+

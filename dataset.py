@@ -118,7 +118,7 @@ class CustomDataset(Dataset):
     
     Paths to different data caches should not be stored locally long-term. 
     """
-    def __init__(self, transforms=None, override=False):
+    def __init__(self, override=False):
 
         bus_path = "data/yelp_academic_dataset_business_tiny.json"
         photos_json_path = "data/photos.json"
@@ -134,9 +134,8 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         input_, target_ = self.dataset[idx]
 
-        if transforms:
-            input_ = transforms(input_)
-
+        # numpy image is already correctly stored with dims (C, H, W)
+        input_ = torch.from_numpy(image)
         return input_, target_
 
     def __len__(self):

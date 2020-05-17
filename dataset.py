@@ -65,58 +65,63 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, out_path,
         data = json.loads(line)
         b_id = data['business_id']
         p_id = data['photo_id']
+        label = data['label']
 
-        ids2photos[b_id].append(p_id + '.jpg')
-
+        ids2photos[(b_id, label)].append(p_id + '.jpg')
 
     # Get the star rating of each business, begin constructing numpy_array
     raw_ratings_data = open(bus_path, 'r')
     ratings_data = raw_ratings_data.readlines()
 
-    photos_with_ratings = []
+    labels = set([key[1] for key in ids2photos])
 
-    repeats = set()
-    count = 0
-    size = len(ratings_data)
-    for line in ratings_data:
+    for label in labels:
+        photos_with_ratings = []
 
-        data = json.loads(line)
-        b_id = data["business_id"]
-        rating = float(data["stars"])
+        repeats = set()
+        count = 0
+        size = len(ratings_data)
+        for line in ratings_data:
 
-        if b_id in repeats:
-            print('weird duplication of businesses in dataset?') # just to be safe
+            data = json.loads(line)
+            b_id = data["business_id"]
+            rating = float(data["stars"])
 
-        # many businesses do not have photos in the dataset
-        if b_id not in ids2photos:
-            continue
+            if b_id in repeats:
+                print('weird duplication of businesses in dataset?') # just to be safe
 
-        repeats.add(b_id)
+            # many businesses do not have photos in the dataset
+            if b_id not in ids2photos:
+                continue
 
-        for photo_name in ids2photos[b_id]:
-            jpg_file = photos_dir + photo_name
-            im = Image.open(jpg_file)
+            repeats.add(b_id)
 
-            np_im = np.array(im)    
-            np_im = np.transpose(np_im, (2, 0, 1))
+            for photo_name in ids2photos[b_id]:
+                jpg_file = photos_dir + photo_name
+                im = Image.open(jpg_file)
 
-            # pad to a consistent size
-            if pad_size:
-                np_im = pad_to_size(np_im, pad_size)
+                np_im = np.array(im)    
+                np_im = np.transpose(np_im, (2, 0, 1))
 
-            photos_with_ratings.append(np.asarray([np_im, rating]))
+                # pad to a consistent size
+                if pad_size:
+                    np_im = pad_to_size(np_im, pad_size)
 
-    photos_with_ratings = np.asarray(photos_with_ratings)
-    num_data = len(photos_with_ratings)
-    train_cutoff = num_data - (num_data // 10) # 90%
-    val_cutoff = num_data - (num_data // 10) + (num_data // 20) # 5%
+                photos_with_ratings.append(np.asarray([np_im, rating]))
 
-    # train set
-    np.save(out_path + '_train', photos_with_ratings[:train_cutoff], allow_pickle=True)
-    # val set
-    np.save(out_path + '_val', photos_with_ratings[train_cutoff:val_cutoff], allow_pickle=True)
-    # test set
-    np.save(out_path + '_test', photos_with_ratings[val_cutoff:], allow_pickle=True)
+        photos_with_ratings = np.asarray(photos_with_ratings)
+        num_data = len(photos_with_ratings)
+        train_cutoff = num_data - (num_data // 10) # 90%
+        val_cutoff = num_data - (num_data // 10) + (num_data // 20) # 5%
+
+        label = '_' + label 
+        # train set
+
+        np.save(out_path + label + '_train', photos_with_ratings[:train_cutoff], allow_pickle=True)
+        # val set
+        np.save(out_path + label + '_val', photos_with_ratings[train_cutoff:val_cutoff], allow_pickle=True)
+        # test set
+        np.save(out_path + label + '_test', photos_with_ratings[val_cutoff:], allow_pickle=True)
 
 
 
@@ -128,7 +133,7 @@ class CustomDataset(Dataset):
     Paths to different data caches should not be stored locally long-term. 
     """
 
-    def __init__(self, bus_path, mode="train", override=False):
+    def __init__(self, bus_path, label="food", mode="train", override=False):
         """
         @param bus_path (string): filename containing business data
         @param mode (string): Default "Train", "Val" and "Test" also acceptable
@@ -136,6 +141,10 @@ class CustomDataset(Dataset):
         """
         if mode not in ["train", "test", "val"]:
             raise ValueError("Unaccepted dataset mode received")
+
+
+        if label not in ["food", "outside", "drink", "inside", "menu"]:
+            raise ValueError("Unaccepted dataset label received")
 
         photos_json_path = "data/photos.json"
         photos_dir = "data/photos/"
@@ -145,7 +154,7 @@ class CustomDataset(Dataset):
                 processed_path, override=override, pad_size=(400, 600))
 
         # Load the dataset from npy file
-        dataset_path = processed_path + '_' + mode + '.npy'
+        dataset_path = processed_path + '_' + label + '_' + mode + '.npy'
         self.dataset = np.load(dataset_path, allow_pickle=True)
 
     def __getitem__(self, idx):

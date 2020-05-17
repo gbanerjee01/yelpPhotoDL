@@ -52,7 +52,7 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, out_path,
     @param pad_size (tuple): Tuple containing max height and width for an image
 
     """
-    if os.path.exists(out_path + '.npy') and not override:
+    if os.path.exists(out_path + '_train' + '.npy') and not override:
         print("Preprocessed data file already exists")
         return
 
@@ -106,9 +106,18 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, out_path,
 
             photos_with_ratings.append(np.asarray([np_im, rating]))
 
-
     photos_with_ratings = np.asarray(photos_with_ratings)
-    np.save(out_path, photos_with_ratings, allow_pickle=True)
+    num_data = len(photos_with_ratings)
+    train_cutoff = num_data - (num_data // 10) # 90%
+    val_cutoff = num_data - (num_data // 10) + (num_data // 20) # 5%
+
+    # train set
+    np.save(out_path + '_train', photos_with_ratings[:train_cutoff], allow_pickle=True)
+    # val set
+    np.save(out_path + '_val', photos_with_ratings[train_cutoff:val_cutoff], allow_pickle=True)
+    # test set
+    np.save(out_path + '_test', photos_with_ratings[val_cutoff:], allow_pickle=True)
+
 
 
 class CustomDataset(Dataset):
@@ -118,18 +127,26 @@ class CustomDataset(Dataset):
     
     Paths to different data caches should not be stored locally long-term. 
     """
-    def __init__(self, override=False):
 
-        bus_path = "data/yelp_academic_dataset_business_tiny.json"
+    def __init__(self, bus_path, mode="train", override=False):
+        """
+        @param bus_path (string): filename containing business data
+        @param mode (string): Default "Train", "Val" and "Test" also acceptable
+        @param override (bool): controls rewriting processed data files
+        """
+        if mode not in ["train", "test", "val"]:
+            raise ValueError("Unaccepted dataset mode received")
+
         photos_json_path = "data/photos.json"
         photos_dir = "data/photos/"
-        processed_path = "data/combined_photos_ratings" 
+        processed_path = "data/model_data/combined_photos_ratings" 
 
         combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, 
                 processed_path, override=override, pad_size=(400, 600))
 
         # Load the dataset from npy file
-        self.dataset = np.load(processed_path + '.npy', allow_pickle=True)
+        dataset_path = processed_path + '_' + mode + '.npy'
+        self.dataset = np.load(dataset_path, allow_pickle=True)
 
     def __getitem__(self, idx):
         input_, target_ = self.dataset[idx]
@@ -150,4 +167,5 @@ class CustomDataset(Dataset):
 
 # uncomment this call outside of the context of the dataloader
 # to preprocess data before training
-_ = CustomDataset()
+bus_path = "data/yelp_academic_dataset_business_tiny.json"
+_ = CustomDataset(bus_path)

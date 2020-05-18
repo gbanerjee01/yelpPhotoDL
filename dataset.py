@@ -1,5 +1,7 @@
 from PIL import Image
 import json
+from skimage import transform
+import h5py # for caching large numpy arrays
 import os
 import numpy as np
 from torch.utils.data import Dataset
@@ -35,8 +37,84 @@ def pad_to_size(np_im, pad_size):
     return np.pad(np_im, [(0, 0), (pad_hl, pad_hr), (pad_wl, pad_wr)])
 
 
-def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, out_path, 
-        override=False, pad_size=None):
+def generate_ids2photos(photos_json_path):
+    """
+    Accepts the path to the photos.json file, uses that to construct
+    a doubly nested dictionary from label -> (business_id -> jpg file)
+    which is returned. 
+    """
+    raw_photo_data = open(photos_json_path, 'r')
+    photo_data = raw_photo_data.readlines()
+
+    ids2photos = {}
+
+    for line in photo_data:
+        data = json.loads(line)
+        b_id = data['business_id']
+        p_id = data['photo_id']
+        label = data['label']
+
+        if label not in ids2photos:
+            ids2photos[label] = defaultdict(list)
+
+        ids2photos[label][b_id].append(p_id + '.jpg')
+
+    return ids2photos
+
+
+def generate_ids2stars(bus_path):
+    """ 
+    Accepts the file path to the business.json, uses that to construct
+    a dictionary from business ids -> star ratings which is returned.
+    """
+
+    raw_ratings_data = open(bus_path, 'r')
+    ratings_data = raw_ratings_data.readlines()
+    
+    ids2stars = defaultdict(int)
+    for line in ratings_data:
+        d = json.loads(line)
+        ids2stars[d['business_id']] = d['stars']
+
+    return ids2stars
+
+
+def generate_dset_sizes(photo_count):
+    """
+    Accepts int photo_count and uses it to define the size of the 
+    .hdf5 arrays to be created.
+    Sets train as 90% of data, with val and test at 5% of the data. 
+    Called by: combine_photos_ratings
+    """
+    train_size = 9 * photo_count // 10 # 90%
+    val_size = photo_count // 20 # 5% 
+    test_size = photo_count // 20 + photo_count % 20 # 5%
+
+    boundaries = [train_size, train_size + val_size]
+
+    return train_size, val_size, test_size, boundaries
+
+
+def jpg2np(photos_dir, photo_name, pad_size, reduction=(1, 3, 3)):
+    """
+    Uses the photo direction and .jpg name to open an image
+    file, convert it to numpy, and then returns that image. 
+    Shrinks the image by a factor of 2
+    """
+    jpg_file = photos_dir + photo_name
+    im = Image.open(jpg_file)
+
+    np_im = np.array(im)    
+    np_im = np.transpose(np_im, (2, 0, 1)) #reshape for torch
+
+    # pad to a consistent size
+    if pad_size:
+        np_im = pad_to_size(np_im, pad_size)
+
+    return transform.downscale_local_mean(np_im, reduction)
+
+def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, processed_path, 
+        override=False, pad_size=None, verbose=False):
     """
     The first step of preprocessing, accesses the business.json to acquire business
     IDs and ratings, uses those business ID to find associated images in photos.json. 
@@ -47,82 +125,69 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, out_path,
     @param bus_path (string): path to business.json
     @param photos_json_path (string): path to photos.json
     @param photos_dir (string): directory containing .jpg photos
-    @param out_path (string): location where processed data is saved
+    @param processed_path (string): location where processed data is saved
     @param override (bool): flag to control rewriting the already preprocessed file
     @param pad_size (tuple): Tuple containing max height and width for an image
 
     """
-    if os.path.exists(out_path + '_train' + '.npy') and not override:
+    if os.path.exists(processed_path + '_food' + '.hdf5') and not override:
         print("Preprocessed data file already exists")
         return
-
-    raw_photo_data = open(photos_json_path, 'r')
-    photo_data = raw_photo_data.readlines()
     
-    # Associate each business ID with all it's photos
-    ids2photos = defaultdict(list)
-    for line in photo_data:
-        data = json.loads(line)
-        b_id = data['business_id']
-        p_id = data['photo_id']
-        label = data['label']
-
-        ids2photos[(b_id, label)].append(p_id + '.jpg')
-
-    # Get the star rating of each business, begin constructing numpy_array
-    raw_ratings_data = open(bus_path, 'r')
-    ratings_data = raw_ratings_data.readlines()
-
-    labels = set([key[1] for key in ids2photos])
-
+    # Associate each business ID with all it's photos and ratings
+    ids2photos = generate_ids2photos(photos_json_path)
+    ids2stars = generate_ids2stars(bus_path)
+    
+    # we now want to segregate by labels, get the amount of pictures associated with each labels
+    labels = ids2photos.keys()
     for label in labels:
-        photos_with_ratings = []
+        print('\nBeginning processing {} data'.format(label))
+        print('-' * 15)
 
-        repeats = set()
-        count = 0
-        size = len(ratings_data)
-        for line in ratings_data:
+        businesses = ids2stars.keys()
+        data = ids2photos[label]
 
-            data = json.loads(line)
-            b_id = data["business_id"]
-            rating = float(data["stars"])
+        photo_count = sum([len(data[b_id]) for b_id in businesses])
+        train_size, val_size, test_size, boundaries = generate_dset_sizes(photo_count)
+        print(train_size, val_size, test_size)
 
-            if b_id in repeats:
-                print('weird duplication of businesses in dataset?') # just to be safe
+        # declare .hdf5 file and associated Datasets
+        f = h5py.File(processed_path + '_' + label + ".hdf5", "w")
+        train_dset_x = f.create_dataset("train_x", (train_size, 3, 134, 200), dtype='int8')
+        train_dset_y = f.create_dataset("train_y", (train_size,), dtype='int8')
+        
+        val_dset_x = f.create_dataset("val_x", (val_size, 3, 134, 200), dtype='int8')
+        val_dset_y = f.create_dataset("val_y", (val_size,), dtype='int8')
+        
+        test_dset_x = f.create_dataset("test_x", (test_size, 3, 134, 200), dtype='int8')
+        test_dset_y = f.create_dataset("test_y", (test_size,), dtype='int8')
+        
+        example_count = 0 # to track relative index within each h5py file
+        for b_id in businesses:
+            stars = ids2stars[b_id]
+            stars = int(2 * stars)
+            for photo_name in data[b_id]:
+                
+                np_im = jpg2np(photos_dir, photo_name, pad_size)
+                if example_count < boundaries[0]:
+                    train_dset_x[example_count] = np_im
+                    train_dset_y[example_count] = stars
 
-            # many businesses do not have photos in the dataset
-            if b_id not in ids2photos:
-                continue
-
-            repeats.add(b_id)
-
-            for photo_name in ids2photos[b_id]:
-                jpg_file = photos_dir + photo_name
-                im = Image.open(jpg_file)
-
-                np_im = np.array(im)    
-                np_im = np.transpose(np_im, (2, 0, 1))
-
-                # pad to a consistent size
-                if pad_size:
-                    np_im = pad_to_size(np_im, pad_size)
-
-                photos_with_ratings.append(np.asarray([np_im, rating]))
-
-        photos_with_ratings = np.asarray(photos_with_ratings)
-        num_data = len(photos_with_ratings)
-        train_cutoff = num_data - (num_data // 10) # 90%
-        val_cutoff = num_data - (num_data // 10) + (num_data // 20) # 5%
-
-        label = '_' + label 
-        # train set
-
-        np.save(out_path + label + '_train', photos_with_ratings[:train_cutoff], allow_pickle=True)
-        # val set
-        np.save(out_path + label + '_val', photos_with_ratings[train_cutoff:val_cutoff], allow_pickle=True)
-        # test set
-        np.save(out_path + label + '_test', photos_with_ratings[val_cutoff:], allow_pickle=True)
-
+                elif example_count < boundaries[1]: 
+                    idx = example_count - boundaries[0]
+                    val_dset_x[idx] = np_im
+                    val_dset_y[idx] = stars
+                else:
+                    idx = example_count - boundaries[1]
+                    test_dset_x[idx] = np_im
+                    test_dset_y[idx] = stars
+                
+                example_count += 1
+              
+                if verbose and example_count % verbose == 0:
+                    print('Processed {} images out of {}'.format(example_count, photo_count))
+                    
+                
 
 
 class CustomDataset(Dataset):
@@ -133,48 +198,59 @@ class CustomDataset(Dataset):
     Paths to different data caches should not be stored locally long-term. 
     """
 
-    def __init__(self, bus_path, label="food", mode="train", override=False):
+    def __init__(self, bus_path, label="food", mode="train", 
+            override=False, verbose=0):
         """
         @param bus_path (string): filename containing business data
         @param mode (string): Default "Train", "Val" and "Test" also acceptable
+        @param label (string): one of "food", "inside", "outside", "food", "menu", 
+                               selects which subset of yelp photo data we are 
+                               training on
         @param override (bool): controls rewriting processed data files
+        @param verbose (int): if set to a positive value, preprocess will print updates 
+                              each time <verbose> photos have been processed
         """
-        if mode not in ["train", "test", "val"]:
-            raise ValueError("Unaccepted dataset mode received")
-
-
-        if label not in ["food", "outside", "drink", "inside", "menu"]:
-            raise ValueError("Unaccepted dataset label received")
+        self.check_params(label, mode, verbose)    
 
         photos_json_path = "data/photos.json"
         photos_dir = "data/photos/"
-        processed_path = "data/model_data/combined_photos_ratings" 
+        processed_path = "data/model_data/combined" 
 
         combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, 
-                processed_path, override=override, pad_size=(400, 600))
+                processed_path, override=override, pad_size=(400, 600), verbose=verbose)
 
         # Load the dataset from npy file
-        dataset_path = processed_path + '_' + label + '_' + mode + '.npy'
-        self.dataset = np.load(dataset_path, allow_pickle=True)
+        dataset_path = processed_path + '_' + label + '.hdf5'
+        f = h5py.File(processed_path + '_' + label + ".hdf5", "r")
+        self.dataset_x = f[mode + "_x"] 
+        self.dataset_y = f[mode + "_y"] 
 
     def __getitem__(self, idx):
-        input_, target_ = self.dataset[idx]
+        input_, target_ = self.dataset_x[idx], self.dataset_y[idx]
 
         # numpy image is already correctly stored with dims (C, H, W)
         input_ = torch.from_numpy(image)
         return input_, target_
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.dataset_x)
 
-    def get_vocab(self):
-        return self.vocab
 
-    def get_json_path(self):
-        return self.json_path
+    def check_params(self, label, mode, verbose):
+        """
+        Called by CustomDataset, ensures all flags are expected. 
+        """
+        if mode not in ["train", "test", "val"]:
+            raise ValueError("Unaccepted dataset mode received")
+
+        if label not in ["food", "outside", "drink", "inside", "menu"]:
+            raise ValueError("Unaccepted dataset label received")
+
+        if verbose < 0:
+            raise ValueError("Verbose cannot be negative")
 
 
 # uncomment this call outside of the context of the dataloader
 # to preprocess data before training
-bus_path = "data/yelp_academic_dataset_business_tiny.json"
-_ = CustomDataset(bus_path)
+bus_path = "data/yelp_academic_dataset_business.json"
+_ = CustomDataset(bus_path, override=True, verbose=5000)

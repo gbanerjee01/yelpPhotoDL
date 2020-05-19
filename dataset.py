@@ -3,6 +3,8 @@ import json
 from skimage import transform
 import h5py # for caching large numpy arrays
 import os
+import torch
+import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import Dataset
 from collections import defaultdict
@@ -95,7 +97,7 @@ def generate_dset_sizes(photo_count):
     return train_size, val_size, test_size, boundaries
 
 
-def jpg2np(photos_dir, photo_name, pad_size, reduction=(1, 3, 3)):
+def jpg2np(photos_dir, photo_name, pad_size, reduction=(1, 1 / 3, 1 / 3)):
     """
     Uses the photo direction and .jpg name to open an image
     file, convert it to numpy, and then returns that image. 
@@ -111,7 +113,17 @@ def jpg2np(photos_dir, photo_name, pad_size, reduction=(1, 3, 3)):
     if pad_size:
         np_im = pad_to_size(np_im, pad_size)
 
-    return transform.downscale_local_mean(np_im, reduction)
+    np_im = transform.rescale(np_im, reduction)
+    return np_im
+
+
+def generate_star_histograms(bus_path, label):
+    """
+    Generates a histogram of star ratings for all the businesses included 
+
+    """
+
+
 
 def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, processed_path, 
         override=False, pad_size=None, verbose=False):
@@ -130,7 +142,7 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, processed
     @param pad_size (tuple): Tuple containing max height and width for an image
 
     """
-    if os.path.exists(processed_path + '_food' + '.hdf5') and not override:
+    if os.path.exists(processed_path + '_food' + '_inputs.npy') and not override:
         print("Preprocessed data file already exists")
         return
     
@@ -150,45 +162,55 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, processed
         photo_count = sum([len(data[b_id]) for b_id in businesses])
         train_size, val_size, test_size, boundaries = generate_dset_sizes(photo_count)
         print(train_size, val_size, test_size)
+        
+        inputs = np.empty((photo_count, 3, 133, 200), dtype="int8")
+        outputs = np.empty((photo_count,), dtype="int8")
+
 
         # declare .hdf5 file and associated Datasets
-        f = h5py.File(processed_path + '_' + label + ".hdf5", "w")
-        train_dset_x = f.create_dataset("train_x", (train_size, 3, 134, 200), dtype='int8')
-        train_dset_y = f.create_dataset("train_y", (train_size,), dtype='int8')
-        
-        val_dset_x = f.create_dataset("val_x", (val_size, 3, 134, 200), dtype='int8')
-        val_dset_y = f.create_dataset("val_y", (val_size,), dtype='int8')
-        
-        test_dset_x = f.create_dataset("test_x", (test_size, 3, 134, 200), dtype='int8')
-        test_dset_y = f.create_dataset("test_y", (test_size,), dtype='int8')
+#       f = h5py.File(processed_path + '_' + label + ".hdf5", "w")
+#       train_dset_x = f.create_dataset("train_x", (train_size, 3, 134, 200), dtype='int8')
+#       train_dset_y = f.create_dataset("train_y", (train_size,), dtype='int8')
+#       
+#       val_dset_x = f.create_dataset("val_x", (val_size, 3, 134, 200), dtype='int8')
+#       val_dset_y = f.create_dataset("val_y", (val_size,), dtype='int8')
+#       
+#       test_dset_x = f.create_dataset("test_x", (test_size, 3, 134, 200), dtype='int8')
+#       test_dset_y = f.create_dataset("test_y", (test_size,), dtype='int8')
         
         example_count = 0 # to track relative index within each h5py file
+        star_histogram = [0] * 10 # 10 different possible star ratings
+
         for b_id in businesses:
             stars = ids2stars[b_id]
             stars = int(2 * stars)
             for photo_name in data[b_id]:
                 
                 np_im = jpg2np(photos_dir, photo_name, pad_size)
-                if example_count < boundaries[0]:
-                    train_dset_x[example_count] = np_im
-                    train_dset_y[example_count] = stars
+                
+                inputs[example_count] = np_im
 
-                elif example_count < boundaries[1]: 
-                    idx = example_count - boundaries[0]
-                    val_dset_x[idx] = np_im
-                    val_dset_y[idx] = stars
-                else:
-                    idx = example_count - boundaries[1]
-                    test_dset_x[idx] = np_im
-                    test_dset_y[idx] = stars
+                outputs[example_count] = stars
+#               if example_count < boundaries[0]:
+#                   train_dset_x[example_count] = np_im
+#                   train_dset_y[example_count] = stars
+
+#               elif example_count < boundaries[1]: 
+#                   idx = example_count - boundaries[0]
+#                   val_dset_x[idx] = np_im
+#                   val_dset_y[idx] = stars
+#               else:
+#                   idx = example_count - boundaries[1]
+#                   test_dset_x[idx] = np_im
+#                   test_dset_y[idx] = stars
                 
                 example_count += 1
               
                 if verbose and example_count % verbose == 0:
                     print('Processed {} images out of {}'.format(example_count, photo_count))
                     
-                
-
+        np.save(processed_path + '_' + label + '_inputs', inputs, allow_pickle=True)
+        np.save(processed_path + '_' + label + '_outputs', outputs, allow_pickle=True)
 
 class CustomDataset(Dataset):
     """
@@ -196,6 +218,9 @@ class CustomDataset(Dataset):
     __getitem__ API and the _yield_ API.
     
     Paths to different data caches should not be stored locally long-term. 
+
+
+    TODO: will likely need to be modified to read and write on the VM
     """
 
     def __init__(self, bus_path, label="food", mode="train", 
@@ -220,16 +245,14 @@ class CustomDataset(Dataset):
                 processed_path, override=override, pad_size=(400, 600), verbose=verbose)
 
         # Load the dataset from npy file
-        dataset_path = processed_path + '_' + label + '.hdf5'
-        f = h5py.File(processed_path + '_' + label + ".hdf5", "r")
-        self.dataset_x = f[mode + "_x"] 
-        self.dataset_y = f[mode + "_y"] 
+        self.dataset_x = np.load(processed_path + '_' + label + '_inputs.npy', allow_pickle=True)
+        self.dataset_y = np.load(processed_path + '_' + label + '_outputs.npy', allow_pickle=True)
 
     def __getitem__(self, idx):
         input_, target_ = self.dataset_x[idx], self.dataset_y[idx]
 
         # numpy image is already correctly stored with dims (C, H, W)
-        input_ = torch.from_numpy(image)
+        input_ = torch.from_numpy(input_)
         return input_, target_
 
     def __len__(self):
@@ -252,5 +275,5 @@ class CustomDataset(Dataset):
 
 # uncomment this call outside of the context of the dataloader
 # to preprocess data before training
-bus_path = "data/yelp_academic_dataset_business.json"
-_ = CustomDataset(bus_path, override=True, verbose=5000)
+bus_path = "data/yelp_academic_dataset_business_tiny.json"
+ds = CustomDataset(bus_path, override=True, verbose=5000)

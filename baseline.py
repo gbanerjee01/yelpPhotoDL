@@ -12,6 +12,8 @@ import time
 import os
 import copy
 
+from dataset import *
+
 plt.ion()   # interactive mode
 
 def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
@@ -150,8 +152,9 @@ data_transforms = {
 
 #These next few lines are where I am having trouble
 
-data_dir = 'pathToJPGs'
-image_datasets = {x: datasets.ImageFolder(data_dir, data_transforms[x]) for x in ['train', 'val']}
+# data_dir = 'pathToJPGs'
+# image_datasets = {x: datasets.ImageFolder(data_dir, data_transforms[x]) for x in ['train', 'val']}
+image_datasets = {x: CustomDataset(bus_path, label="menu", mode=x) for x in ['train', 'val']}
 dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True, num_workers=4) for x in ['train', 'val']}
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}

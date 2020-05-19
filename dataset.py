@@ -1,8 +1,7 @@
 from PIL import Image
 import json
-from skimage import transform
-import h5py # for caching large numpy arrays
 import os
+from skimage import transform
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -97,7 +96,7 @@ def generate_dset_sizes(photo_count):
     return train_size, val_size, test_size, boundaries
 
 
-def jpg2np(photos_dir, photo_name, pad_size, reduction=(1, 1 / 3, 1 / 3)):
+def jpg2np(photos_dir, photo_name, pad_size, reduction=(1,3,3)):
     """
     Uses the photo direction and .jpg name to open an image
     file, convert it to numpy, and then returns that image. 
@@ -113,8 +112,7 @@ def jpg2np(photos_dir, photo_name, pad_size, reduction=(1, 1 / 3, 1 / 3)):
     if pad_size:
         np_im = pad_to_size(np_im, pad_size)
 
-    np_im = transform.rescale(np_im, reduction)
-    return np_im
+    return np_im[::reduction[0], ::reduction[1], ::reduction[2]]
 
 
 def generate_star_histograms(bus_path, label):
@@ -149,6 +147,8 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, processed
     # Associate each business ID with all it's photos and ratings
     ids2photos = generate_ids2photos(photos_json_path)
     ids2stars = generate_ids2stars(bus_path)
+    print(len(ids2photos))
+    print(len(ids2stars))
     
     # we now want to segregate by labels, get the amount of pictures associated with each labels
     labels = ids2photos.keys()
@@ -163,7 +163,7 @@ def combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, processed
         train_size, val_size, test_size, boundaries = generate_dset_sizes(photo_count)
         print(train_size, val_size, test_size)
         
-        inputs = np.empty((photo_count, 3, 133, 200), dtype="int8")
+        inputs = np.empty((photo_count, 3, 134, 200), dtype="int8")
         outputs = np.empty((photo_count,), dtype="int8")
 
 
@@ -237,9 +237,9 @@ class CustomDataset(Dataset):
         """
         self.check_params(label, mode, verbose)    
 
-        photos_json_path = "data/photos.json"
-        photos_dir = "data/photos/"
-        processed_path = "data/model_data/combined" 
+        photos_json_path = "../all_data/data/photos.json"
+        photos_dir = "../all_data/data/photos/"
+        processed_path = "processed_data/combined" 
 
         combine_photos_and_ratings(bus_path, photos_json_path, photos_dir, 
                 processed_path, override=override, pad_size=(400, 600), verbose=verbose)
@@ -275,5 +275,5 @@ class CustomDataset(Dataset):
 
 # uncomment this call outside of the context of the dataloader
 # to preprocess data before training
-bus_path = "data/yelp_academic_dataset_business_tiny.json"
+bus_path = "../all_data/data/yelp_academic_dataset_business_tiny.json"
 ds = CustomDataset(bus_path, override=True, verbose=5000)

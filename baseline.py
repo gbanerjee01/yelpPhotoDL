@@ -154,6 +154,7 @@ data_transforms = {
 
 # data_dir = 'pathToJPGs'
 # image_datasets = {x: datasets.ImageFolder(data_dir, data_transforms[x]) for x in ['train', 'val']}
+bus_path = "../all_data/data/yelp_academic_dataset_business.json"
 image_datasets = {x: CustomDataset(bus_path, label="menu", mode=x) for x in ['train', 'val']}
 dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True, num_workers=4) for x in ['train', 'val']}
 

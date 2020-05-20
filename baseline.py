@@ -38,8 +38,8 @@ def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
 
             # Iterate over data.
             for inputs, labels in dataloaders[phase]:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
+                inputs = inputs.to(device, dtype=torch.float)
+            	labels = labels.to(device, dtype=torch.long)
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
@@ -92,8 +92,8 @@ def visualize_model(model, num_images=6):
 
     with torch.no_grad():
         for i, (inputs, labels) in enumerate(dataloaders['val']):
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+            inputs = inputs.to(device, dtype=torch.float)
+            labels = labels.to(device, dtype=torch.long)
 
             outputs = model(inputs)
             _, preds = torch.max(outputs, 1)
@@ -127,8 +127,8 @@ def imshow(inp, title=None):
 
 
 #Instead of doing this here, we should be using the Dataset class
-stars = np.load("/content/drive/My Drive/tl resnet data/menu/combined_menu_outputs.npy", allow_pickle=True) #all of the star values in order
-menus = np.load("/content/drive/My Drive/tl resnet data/menu/combined_menu_inputs.npy", allow_pickle=True)
+# stars = np.load("/content/drive/My Drive/tl resnet data/menu/combined_menu_outputs.npy", allow_pickle=True) #all of the star values in order
+# menus = np.load("/content/drive/My Drive/tl resnet data/menu/combined_menu_inputs.npy", allow_pickle=True)
 # print(menus.shape)
 # print(stars.shape)
 # print(stars)
@@ -152,14 +152,11 @@ data_transforms = {
 
 #These next few lines are where I am having trouble
 
-# data_dir = 'pathToJPGs'
-# image_datasets = {x: datasets.ImageFolder(data_dir, data_transforms[x]) for x in ['train', 'val']}
 bus_path = "../all_data/data/yelp_academic_dataset_business.json"
-image_datasets = {x: CustomDataset(bus_path, label="menu", mode=x) for x in ['train', 'val']}
+image_datasets = {x: CustomDataset(bus_path, label="food", mode=x) for x in ['train', 'val']}
 dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4, shuffle=True, num_workers=4) for x in ['train', 'val']}
 
 dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
-# class_names = image_datasets['train'].classes
 class_names = range(11) #what each output class can be [0-10] because we haven't yet divided by 2
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -172,7 +169,8 @@ inputs, classes = next(iter(dataloaders['train']))
 # Make a grid from batch
 out = torchvision.utils.make_grid(inputs)
 
-imshow(out, title=[class_names[x] for x in classes])
+#uncomment if terminal can display
+# imshow(out, title=[class_names[x] for x in classes])
 
 #***********************
 
@@ -199,7 +197,9 @@ exp_lr_scheduler = lr_scheduler.StepLR(optimizer_conv, step_size=7, gamma=0.1)
 
 model_conv = train_model(model_conv, criterion, optimizer_conv,
                          exp_lr_scheduler, num_epochs=25)
-visualize_model(model_conv)
 
-plt.ioff()
-plt.show()
+#uncomment if possible to visualize
+# visualize_model(model_conv)
+
+# plt.ioff()
+# plt.show()
